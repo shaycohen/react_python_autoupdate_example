@@ -1,0 +1,226 @@
+import React, { useState, useEffect, useRef } from 'react';
+
+/**
+ * Example JSON structure we expect from the API:
+ * [
+ *   { id: 1, name: "Node A", status: "OK" },
+ *   { id: 2, name: "Node B", status: "NOT OK" },
+ *   ...
+ * ]
+ */
+
+function ReactiveDataTable() {
+  const [records, setRecords] = useState([]);
+  const [lastUpdate, setLastUpdate] = useState(null);
+  const [blinkDot, setBlinkDot] = useState(false);
+  const [blinkCount, setBlinkCount] = useState(0);
+
+  // Track which row IDs should be visually highlighted for changes
+  const [highlightedRows, setHighlightedRows] = useState([]);
+  
+  // Keep a ref to old data to detect changes
+  const prevRecordsRef = useRef([]);
+
+  // Fetch data from your backend API
+  async function fetchData() {
+    try {
+      // Replace this URL with your real endpoint
+      const response = await fetch('http://localhost:5000/data');
+      const newData = await response.json();
+
+      // Determine which records changed or are new
+      const changedIds = findChangedOrNewRecords(prevRecordsRef.current, newData);
+
+      if (changedIds.length > 0) {
+        // Trigger blinking red dot
+        setBlinkCount(5); // we want 5 blinks
+        // Highlight changed rows
+        setHighlightedRows(changedIds);
+      }
+
+      // Update states
+      setRecords(newData);
+      prevRecordsRef.current = newData; // store the new data for next comparison
+      setLastUpdate(new Date()); // capture timestamp
+    } catch (error) {
+      console.error('Failed to fetch data:', error);
+    }
+  }
+
+  // Utility to find which records have been changed or newly added
+  function findChangedOrNewRecords(oldRecords, newRecords) {
+    // Build a map of old records by ID for quick lookup
+    const oldMap = {};
+    oldRecords.forEach((rec) => {
+      oldMap[rec.id] = rec;
+    });
+
+    const changedIds = [];
+    // Check all new records to see if they are new or have changed fields
+    newRecords.forEach((newRec) => {
+      const oldRec = oldMap[newRec.id];
+      if (!oldRec) {
+        // It's a brand new record
+        changedIds.push(newRec.id);
+      } else {
+        // Check if fields have changed (simple JSON comparison)
+        if (JSON.stringify(oldRec) !== JSON.stringify(newRec)) {
+          changedIds.push(newRec.id);
+        }
+      }
+    });
+
+    return changedIds;
+  }
+
+  // Initial fetch on mount
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  // Poll for data every 5 seconds
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      fetchData();
+    }, 5000);
+    return () => clearInterval(intervalId);
+  }, []);
+
+  // Handle blinking dot logic for the entire dataset
+  useEffect(() => {
+    if (blinkCount > 0) {
+      setBlinkDot(true); // show red dot
+      const blinkInterval = setInterval(() => {
+        setBlinkDot((prev) => !prev);
+        setBlinkCount((prevCount) => prevCount - 1);
+      }, 500); // toggle dot every 0.5s
+
+      return () => clearInterval(blinkInterval);
+    } else {
+      // Once blinkCount hits 0, ensure dot is hidden
+      setBlinkDot(false);
+    }
+  }, [blinkCount]);
+
+  // Remove highlight after a short delay (e.g. 3 seconds)
+  useEffect(() => {
+    if (highlightedRows.length > 0) {
+      const timer = setTimeout(() => {
+        setHighlightedRows([]);
+      }, 3000); // Highlight lasts for 3 seconds
+      return () => clearTimeout(timer);
+    }
+  }, [highlightedRows]);
+
+  // Manual refresh handler
+  const handleManualRefresh = () => {
+    fetchData();
+  };
+
+  return (
+    <div style={styles.container}>
+      {/* Header */}
+      <div style={styles.header}>
+        <h2>Data Records (React Only)</h2>
+
+        <div style={{ position: 'relative' }}>
+          {/* Red dot (positioned top-right corner) */}
+          <div
+            style={{
+              ...styles.redDot,
+              opacity: blinkDot ? 1 : 0,  // show/hide based on blink state
+            }}
+          />
+        </div>
+
+        <div>
+          <strong>Last Updated:</strong>{' '}
+          {lastUpdate ? lastUpdate.toLocaleString() : '—'}
+        </div>
+
+        <div>
+          <strong>Record Count:</strong> {records.length}
+        </div>
+
+        <button onClick={handleManualRefresh}>Refresh Manually</button>
+      </div>
+
+      {/* Main Table */}
+      <table style={styles.table}>
+        <thead>
+          <tr>
+            <th style={styles.tableHeader}>ID</th>
+            <th style={styles.tableHeader}>Name</th>
+            <th style={styles.tableHeader}>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {records.map((rec) => {
+            const isHighlighted = highlightedRows.includes(rec.id);
+            return (
+              <tr
+                key={rec.id}
+                style={{
+                  ...styles.tableRow,
+                  ...(isHighlighted ? styles.highlight : {}),
+                }}
+              >
+                <td>{rec.id}</td>
+                <td>{rec.name}</td>
+                <td>{rec.status}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// Inline CSS styles for demonstration
+const styles = {
+  container: {
+    width: '80%',
+    margin: '0 auto',
+    marginTop: '2rem',
+    fontFamily: 'Arial, sans-serif',
+  },
+  header: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '1rem',
+    position: 'relative',
+  },
+  redDot: {
+    position: 'absolute',
+    top: '-10px',
+    right: '-10px',
+    width: '10px',
+    height: '10px',
+    borderRadius: '50%',
+    backgroundColor: 'red',
+    transition: 'opacity 0.2s ease-in-out',
+  },
+  table: {
+    width: '100%',
+    borderCollapse: 'collapse',
+    textAlign: 'left',
+  },
+  tableHeader: {
+    borderBottom: '1px solid #ccc',
+    padding: '8px',
+  },
+  tableRow: {
+    borderBottom: '1px solid #ccc',
+    padding: '8px',
+    transition: 'background-color 0.5s ease-in-out', // smooth transition
+  },
+  // "Soft blink" highlight (e.g., a pale yellow background)
+  highlight: {
+    backgroundColor: 'rgba(255, 255, 0, 0.3)', // pale yellow
+  },
+};
+
+export default ReactiveDataTable;
+
